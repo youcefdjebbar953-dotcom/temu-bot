@@ -28,7 +28,7 @@ SHOP_NAME    = "Youcef Shop DZ 🛍️"
 BOT_USERNAME = "@youcef_shop_bot"
 OWNER_TG     = "@youcef2333"
 WHATSAPP     = "213560560835"
-INSTAGRAM    = "youcefshopdz"
+INSTAGRAM    = "youcef_shop_dz"
 DELIVERY_MIN = 15
 DELIVERY_MAX = 25
 DB_FILE      = "orders.db"
@@ -216,7 +216,7 @@ WELCOME = (
     "مرحباً {name}! 👋\n\n"
     "نجيبلك أي منتج من تيمو\n"
     "ويوصلك لباب دارك! 🚀\n\n"
-    "💡 بلا تعب • دفع عند الاستلام\n\n"
+    "💡 ابعث سكرينشوت السلة وشوف السعر فوراً! 📸\n\n"
     "اختر من القائمة 👇"
 )
 
@@ -324,11 +324,12 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "calc_price":
         await q.edit_message_text(
-            "🧮 *احسب السعر*\n\n"
-            "شوف سعر المنتج من السلة بالدولار `$`\n"
-            "وابعثه هكذا:\n\n"
-            "`سعر 12.99`\n\n"
-            "مثال: إذا شفت `$8.50` → ابعث `سعر 8.50` ✅",
+            "🧮 *احسب سعر منتج*\n\n"
+            "📸 ابعث سكرينشوت من السلة تاع تيمو\n"
+            "والبوت يحسبلك السعر تلقائياً! ✨\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "أو إذا تعرف السعر ابعثه هكذا:\n"
+            "`سعر 12.99`",
             reply_markup=back_kb(),
             parse_mode="Markdown",
         )
@@ -543,17 +544,18 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if "temu.com" in text.lower():
         await update.message.reply_text(
             "✅ *شفت الرابط!*\n\n"
-            "📌 افتح الرابط، حط المنتج في السلة\n"
-            "وشوف السعر `$` وابعثه هكذا:\n\n"
-            "`سعر 12.99`\n\n"
-            "مثال: إذا شفت `$8.50` → ابعث `سعر 8.50` ✅",
+            "📸 حط المنتج في السلة وخذ سكرينشوت\n"
+            "وابعثه هنا — البوت يحسب السعر تلقائياً! ✨",
             parse_mode="Markdown",
             reply_markup=back_kb(),
         )
         return
 
     await update.message.reply_text(
-        "👋 ابعثلي السعر من السلة:\n`سعر 12.99`\n\nللمساعدة /help",
+        "👋 ابعثلي سكرينشوت من سلة تيمو\n"
+        "والبوت يحسب السعر تلقائياً! 📸\n\n"
+        "أو ابعث السعر يدوياً: `سعر 12.99`\n\n"
+        "للمساعدة: /help",
         parse_mode="Markdown",
         reply_markup=main_kb(),
     )

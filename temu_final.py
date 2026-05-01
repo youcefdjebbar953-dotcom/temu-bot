@@ -270,7 +270,7 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🚚 مشحونة: `{shipped}`\n"
         f"📦 موصّلة: `{delivered}`\n"
         f"💰 الإيرادات: `{revenue:,} دج`\n\n"
-        f"لتحديث حالة طلب:\n`/حالة YS0001 shipped`",
+        f"لتحديث حالة طلب:\n`/status YS0001 shipped`",
         parse_mode="Markdown",
     )
 
@@ -280,7 +280,7 @@ async def cmd_update_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     args = ctx.args
     if len(args) < 2:
-        await update.message.reply_text("الاستخدام: `/حالة YS0001 shipped`", parse_mode="Markdown")
+        await update.message.reply_text("الاستخدام: `/status YS0001 shipped`", parse_mode="Markdown")
         return
     order_num, new_status = args[0].upper(), args[1].lower()
     if new_status not in STATUS_LABELS:
@@ -622,9 +622,9 @@ def main():
     )
 
     app.add_handler(conv)
-    app.add_handler(CommandHandler("طلبي",  cmd_my_orders))
+    app.add_handler(CommandHandler("orders",  cmd_my_orders))
     app.add_handler(CommandHandler("admin",  cmd_admin))
-    app.add_handler(CommandHandler("حالة",  cmd_update_status))
+    app.add_handler(CommandHandler("status",  cmd_update_status))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
 

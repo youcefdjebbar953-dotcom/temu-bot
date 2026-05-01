@@ -33,6 +33,9 @@ DELIVERY_MIN = 15
 DELIVERY_MAX = 25
 DB_FILE      = "orders.db"
 CLAUDE_KEY   = "YOUR_CLAUDE_API_KEY"  # ← احصل عليه من console.anthropic.com
+VIP_PRICE    = 500   # سعر اشتراك VIP بالدينار
+VIP_DISCOUNT = 20    # نسبة خصم VIP %
+VIP_DURATION = 30    # مدة الاشتراك بالأيام
 # ============================================================
 
 WAITING_PROOF = 1
@@ -78,8 +81,40 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY, value TEXT
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS vip_users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        full_name TEXT,
+        expires_at TEXT,
+        created_at TEXT
+    )''')
     conn.commit()
     conn.close()
+
+def is_vip(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT expires_at FROM vip_users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return False
+    from datetime import datetime
+    return datetime.strptime(row[0], "%Y-%m-%d %H:%M") > datetime.now()
+
+def add_vip(user_id, username, full_name):
+    from datetime import datetime, timedelta
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    now = datetime.now()
+    expires = now + timedelta(days=VIP_DURATION)
+    c.execute("INSERT OR REPLACE INTO vip_users VALUES (?,?,?,?,?)",
+        (user_id, username or "—", full_name,
+         expires.strftime("%Y-%m-%d %H:%M"),
+         now.strftime("%Y-%m-%d %H:%M")))
+    conn.commit()
+    conn.close()
+    return expires.strftime("%Y-%m-%d")
 
 def get_setting(key):
     conn = sqlite3.connect(DB_FILE)
@@ -151,14 +186,20 @@ def get_stats():
 # ============================================================
 # 🧮  حساب السعر
 # ============================================================
-def calc(usd: float) -> dict:
+def calc(usd: float, vip: bool = False) -> dict:
     base  = usd * DOLLAR_RATE
     total = base + PROFIT_FIXED
+    discount = 0
+    if vip:
+        discount = round(total * VIP_DISCOUNT / 100)
+        total = total - discount
     return {
         "usd": usd,
         "base": round(base),
         "profit": PROFIT_FIXED,
+        "discount": discount,
         "total": round(total / 50) * 50,
+        "vip": vip,
     }
 
 # ============================================================
@@ -176,6 +217,7 @@ def main_kb():
             InlineKeyboardButton("📞 تواصل معنا",     callback_data="contact"),
         ],
         [InlineKeyboardButton("⭐ قيّم خدمتنا",      callback_data="rate_us")],
+        [InlineKeyboardButton("👑 اشتراك VIP",          callback_data="vip_info")],
     ])
 
 def back_kb():
@@ -497,6 +539,50 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         await q.edit_message_text("🔄 تم إشعار العميل بالمعالجة")
 
+    elif data == "vip_info":
+        vip_status = is_vip(user.id)
+        if vip_status:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT expires_at FROM vip_users WHERE user_id=?", (user.id,))
+            row = c.fetchone()
+            conn.close()
+            exp = row[0] if row else "—"
+            await q.edit_message_text(
+                f"👑 *أنت عضو VIP!*\n\n"
+                f"✅ خصم 20% على كل طلباتك\n"
+                f"✅ أولوية في المعالجة\n"
+                f"✅ استشارة مجانية\n\n"
+                f"📅 ينتهي اشتراكك: `{exp}`",
+                reply_markup=back_kb(),
+                parse_mode="Markdown",
+            )
+        else:
+            await q.edit_message_text(
+                f"👑 *اشتراك VIP — {VIP_PRICE:,} دج/شهر*\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✨ *مزايا VIP:*\n"
+                f"• خصم 20% على كل طلباتك 💰\n"
+                f"• أولوية في معالجة الطلبات 🚀\n"
+                f"• استشارة مجانية لاختيار المنتجات 🎯\n"
+                f"━━━━━━━━━━━━━━━━━━\n\n"
+                f"للاشتراك تواصل معنا:\n"
+                f"📱 {OWNER_TG}\n"
+                f"💬 واتساب: {WHATSAPP[3:]}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 اشترك الآن", url=f"https://wa.me/{WHATSAPP}")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")],
+                ]),
+                parse_mode="Markdown",
+            )
+
+    elif data == "activate_vip":
+        admin_id_val = get_setting("admin_id")
+        if str(user.id) != str(admin_id_val):
+            return
+        # يستعمله الأدمن لتفعيل VIP لعميل
+        await q.answer("استعمل /vip USER_ID", show_alert=True)
+
     elif data.startswith("reject_") and str(user.id) == str(admin_id):
         uid = int(data.split("_")[1])
         try:
@@ -521,9 +607,10 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             usd = float(manual.group(1).replace(",", "."))
             if usd <= 0: raise ValueError
-            p = calc(usd)
+            vip_status = is_vip(update.effective_user.id)
+            p = calc(usd, vip=vip_status)
             await update.message.reply_text(
-                f"🧮 *حساب السعر*\n\n"
+                f"🧮 *حساب السعر*" + (" 👑 *VIP*" if vip_status else "") + "\n\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"💵 سعر تيمو: `${p['usd']:.2f}`\n"
                 f"💱 سعر الدولار: `{DOLLAR_RATE} دج`\n"
@@ -610,7 +697,8 @@ async def on_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Claude Vision error: {e}")
 
     if usd_price and usd_price > 0:
-        p = calc(usd_price)
+        vip_status = is_vip(update.effective_user.id)
+        p = calc(usd_price, vip=vip_status)
         await thinking_msg.edit_text(
             f"✅ *قرأت السعر من صورتك!*\n\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -619,8 +707,9 @@ async def on_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"📊 السعر بالدينار: `{p['base']:,} دج`\n"
             f"💰 رسوم الخدمة: `+{p['profit']:,} دج`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🏷️ *السعر الإجمالي: `{p['total']:,} دج`*\n\n"
-            f"🚚 التوصيل: {DELIVERY_MIN}–{DELIVERY_MAX} يوم\n\n"
+            f"🏷️ *السعر الإجمالي: `{p['total']:,} دج`*\n"
+            + (f"👑 *خصم VIP 20%: `-{p['discount']:,} دج`* 🎉\n" if p.get('vip') else f"💡 _اشترك VIP ووفر 20%_ 👑\n")
+            + f"\n🚚 التوصيل: {DELIVERY_MIN}–{DELIVERY_MAX} يوم\n\n"
             f"*تحب تطلب؟* 👇",
             parse_mode="Markdown",
             reply_markup=order_kb(p['usd'], p['total']),
@@ -668,6 +757,40 @@ async def on_direct_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
+async def cmd_activate_vip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """أدمن فقط: /vip USER_ID"""
+    admin_id = get_setting("admin_id")
+    if str(update.effective_user.id) != str(admin_id):
+        return
+    args = ctx.args
+    if not args:
+        await update.message.reply_text("الاستخدام: `/vip 123456789`", parse_mode="Markdown")
+        return
+    try:
+        uid = int(args[0])
+        # نجيب معلومات المستخدم
+        expires = add_vip(uid, None, "عميل VIP")
+        await update.message.reply_text(
+            f"✅ تم تفعيل VIP للمستخدم `{uid}`\nينتهي: {expires}",
+            parse_mode="Markdown",
+        )
+        try:
+            await ctx.bot.send_message(
+                uid,
+                f"🎉 *مبروك! تم تفعيل اشتراكك VIP!*\n\n"
+                f"✨ الآن تستفيد من:\n"
+                f"• خصم 20% على كل طلباتك 💰\n"
+                f"• أولوية في المعالجة 🚀\n"
+                f"• استشارة مجانية 🎯\n\n"
+                f"📅 ينتهي اشتراكك: {expires}\n\n"
+                f"شكراً لثقتك! ❤️",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+    except ValueError:
+        await update.message.reply_text("❌ ID غير صحيح")
+
 # ============================================================
 # 🚀  Main
 # ============================================================
@@ -692,6 +815,7 @@ def main():
     app.add_handler(CommandHandler("orders",  cmd_my_orders))
     app.add_handler(CommandHandler("admin",  cmd_admin))
     app.add_handler(CommandHandler("status",  cmd_update_status))
+    app.add_handler(CommandHandler("vip",     cmd_activate_vip))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
 

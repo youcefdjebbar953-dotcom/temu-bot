@@ -3,6 +3,8 @@ import re
 import json
 import aiohttp
 import sqlite3
+import base64
+import anthropic
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -25,14 +27,12 @@ PROFIT_FIXED = 300
 SHOP_NAME    = "Youcef Shop DZ 🛍️"
 BOT_USERNAME = "@youcef_shop_bot"
 OWNER_TG     = "@youcef2333"
-CCP_NUMBER   = "0028902673"
-CCP_KEY      = "80"
-ACCOUNT_NAME = "Khedrouche Firas"
 WHATSAPP     = "213560560835"
-INSTAGRAM    = "youcef_shop_dz"
+INSTAGRAM    = "youcefshopdz"
 DELIVERY_MIN = 15
 DELIVERY_MAX = 25
 DB_FILE      = "orders.db"
+CLAUDE_KEY   = "YOUR_CLAUDE_API_KEY"  # ← احصل عليه من console.anthropic.com
 # ============================================================
 
 WAITING_PROOF = 1
@@ -335,13 +335,13 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "payment":
         await q.edit_message_text(
-            "💳 *معلومات الدفع — بريدي موب*\n\n"
+            "💳 *معلومات الدفع*\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"🔢 رقم CCP: `{CCP_NUMBER}`\n"
-            f"🔑 الكلي: `{CCP_KEY}`\n"
-            f"👤 الاسم: {ACCOUNT_NAME}\n"
+            "للدفع وتأكيد طلبك تواصل مع المطور مباشرة:\n\n"
+            f"📱 تلغرام: {OWNER_TG}\n"
+            f"💬 واتساب: {WHATSAPP[3:]}\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
-            "📸 بعد الدفع أرسل *صورة الوصل* للتأكيد ✅",
+            "⏰ سنرد عليك في أقرب وقت ✅",
             reply_markup=back_kb(),
             parse_mode="Markdown",
         )
@@ -454,16 +454,17 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Admin notify: {e}")
         await q.edit_message_text(
             f"🎉 *تم تسجيل طلبك!*\n\n"
-            f"🔖 رقم طلبك: `{order_num}`\n\n"
-            f"💳 *بيانات الدفع:*\n"
-            f"CCP: `{CCP_NUMBER}` كلي `{CCP_KEY}`\n"
-            f"الاسم: {ACCOUNT_NAME}\n\n"
+            f"🔖 رقم طلبك: `{order_num}`\n"
             f"💰 المبلغ: *{total:,} دج*\n\n"
-            f"📸 حوّل وابعث صورة الوصل هنا ✅\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"للدفع وتأكيد طلبك تواصل معنا:\n\n"
+            f"📱 تلغرام: {OWNER_TG}\n"
+            f"💬 واتساب: {WHATSAPP[3:]}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
             f"_احفظ رقم طلبك: `{order_num}`_",
             parse_mode="Markdown",
         )
-        return WAITING_PROOF
+        return ConversationHandler.END
 
     # ── أزرار الأدمن ──
     elif data.startswith("done_") and str(user.id) == str(admin_id):
@@ -561,27 +562,91 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def on_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     admin_id = get_setting("admin_id")
     user = update.effective_user
-    if admin_id:
-        try:
-            await ctx.bot.forward_message(
-                chat_id=int(admin_id),
-                from_chat_id=update.effective_chat.id,
-                message_id=update.message.message_id,
-            )
-            await ctx.bot.send_message(
-                int(admin_id),
-                f"📸 وصل دفع من: {user.full_name} (@{user.username or '—'})\nID: `{user.id}`",
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            logger.warning(f"Forward: {e}")
-    await update.message.reply_text(
-        "✅ *تم استلام الوصل!*\n\n"
-        "📦 لقد أرسلنا طلبك للأدمن\n"
-        f"للمتابعة: {OWNER_TG}",
-        parse_mode="Markdown",
-        reply_markup=main_kb(),
-    )
+
+    # تحقق إذا الصورة سكرينشوت سلة تيمو أو وصل دفع
+    caption = (update.message.caption or "").lower()
+    is_cart = any(w in caption for w in ["سلة", "cart", "سعر", "price", "تيمو", "temu"])
+
+    # حاول تقرأ السعر من الصورة بالذكاء الاصطناعي
+    thinking_msg = await update.message.reply_text("🔍 جاري قراءة الصورة...")
+    usd_price = None
+
+    try:
+        # تحويل الصورة لـ base64
+        photo = update.message.photo[-1]
+        file = await ctx.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+        # Claude Vision API
+        client = anthropic.Anthropic(api_key=CLAUDE_KEY)
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "This is a screenshot from Temu or a shopping cart. Extract ONLY the product price in USD (numbers only, no $ sign). If multiple prices exist, take the main product price. Reply with ONLY the number like: 12.99 — if no price found reply: NONE"
+                    }
+                ],
+            }]
+        )
+        result = response.content[0].text.strip()
+        if result != "NONE":
+            usd_price = float(re.sub(r"[^\d.]", "", result))
+    except Exception as e:
+        logger.warning(f"Claude Vision error: {e}")
+
+    if usd_price and usd_price > 0:
+        p = calc(usd_price)
+        await thinking_msg.edit_text(
+            f"✅ *قرأت السعر من صورتك!*\n\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💵 السعر المكتشف: `${p['usd']:.2f}`\n"
+            f"💱 سعر الدولار: `{DOLLAR_RATE} دج`\n"
+            f"📊 السعر بالدينار: `{p['base']:,} دج`\n"
+            f"💰 رسوم الخدمة: `+{p['profit']:,} دج`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ *السعر الإجمالي: `{p['total']:,} دج`*\n\n"
+            f"🚚 التوصيل: {DELIVERY_MIN}–{DELIVERY_MAX} يوم\n\n"
+            f"*تحب تطلب؟* 👇",
+            parse_mode="Markdown",
+            reply_markup=order_kb(p['usd'], p['total']),
+        )
+    else:
+        # صورة وصل دفع أو ما قدرش يقرأ السعر
+        if admin_id:
+            try:
+                await ctx.bot.forward_message(
+                    chat_id=int(admin_id),
+                    from_chat_id=update.effective_chat.id,
+                    message_id=update.message.message_id,
+                )
+                await ctx.bot.send_message(
+                    int(admin_id),
+                    f"📸 صورة من: {user.full_name} (@{user.username or '—'})\nID: `{user.id}`",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning(f"Forward: {e}")
+        await thinking_msg.edit_text(
+            "✅ *تم استلام الصورة!*\n\n"
+            "📦 أرسلنا طلبك للأدمن\n\n"
+            "إذا كانت سكرينشوت سلة تيمو —\n"
+            "ابعث السعر يدوياً هكذا: `سعر 12.99`",
+            parse_mode="Markdown",
+            reply_markup=main_kb(),
+        )
 
 # ── رسالة مباشرة للأدمن ──
 async def on_direct_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
